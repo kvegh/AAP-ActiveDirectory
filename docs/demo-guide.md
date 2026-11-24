@@ -53,7 +53,8 @@ configuration (applied by Ansible) connects the two. AD ACLs are not imported.
 1. Sign in on the domain controller as domain administrator.
 2. Sign in to the AD AAP as local admin (admin window).
 3. Open a private browser window for the AD test users.
-4. Check that the five projects synced and the smoke test job succeeded.
+4. Check that the five projects synced and launch **Active Directory - Smoke
+   Test** (DK reader and NZ executor see exactly their job templates).
 
 ## 3. Windows: the user and its groups
 
@@ -104,10 +105,11 @@ patched or changed.
 
 ## 7. Part 2: administer AD from AAP
 
-1. Admin window: add a user, e.g. a new DK reader, to the AD objects input
-   (configuration list or survey; decided with the playbooks).
-2. Launch the AD objects job template; it creates the user with the native
-   `microsoft.ad.user` module and adds it to `<prefix>-GG-DK-reader`.
+1. Admin window: launch **Active Directory - Add User**; survey: user name
+   (for example `<prefix>-dk-reader2`), country `DK`, role `reader`.
+2. The job creates the user with the native `microsoft.ad.user` module in OU
+   `DK`, adds it to `<prefix>-GG-DK-reader` and gives it the shared demo
+   password.
 3. Show the user in `dsa.msc`, then sign in with it in the private window:
    same access as the DK reader, no AAP user or team created by hand.
 
