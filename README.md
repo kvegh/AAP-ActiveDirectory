@@ -1,6 +1,6 @@
 # Active Directory login and administration with AAP
 
-Version 0.1.1. Ansible Automation Platform (AAP) users sign in with their
+Version 0.1.2. Ansible Automation Platform (AAP) users sign in with their
 Active Directory (AD) account over LDAPS. AD group membership decides which
 AAP teams they join, and the teams hold scoped permissions on regional
 automation resources. AAP also administers the AD side: the domain

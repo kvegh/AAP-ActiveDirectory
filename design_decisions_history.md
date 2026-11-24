@@ -1,5 +1,14 @@
 # Design decisions history
 
+## 2026-11-24 17:30 (CET): WinRM wait runs locally, version 0.1.2
+
+First deploy on v33 (bead bead-wd-0gnz.45.8): Job 5 — Deploy UseCase AAP
+infra failed at "Wait for WinRM": `delegate_to: localhost` connected by SSH,
+because the deployer's inventory `localhost,` gives localhost no local
+connection. The task now sets `connection: local` (tested locally: fails
+without, passes with). The VM and the DHCP host entry were already created.
+Agent fix under the deploy go-ahead. Commit: see git log.
+
 ## 2026-11-24 16:57 (CET): DNS monitoring tests stay a separate use case
 
 User decision 2026-11-24 (CET): "keep the usecases apart". DNS tests for

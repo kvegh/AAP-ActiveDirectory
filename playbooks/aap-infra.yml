@@ -236,6 +236,8 @@
         port: 5986
         timeout: "{{ infra.ad_infra_wait_timeout }}"
       delegate_to: localhost
+      # The deployer's inventory names localhost without a local connection.
+      connection: local
 
     - name: Check whether the domain Administrator password is already set
       ansible.windows.win_ping:
