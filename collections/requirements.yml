@@ -1,7 +1,7 @@
 ---
 # Collections of playbooks/aap-infra.yml (installed by the AutoDeploy
-# deployer's infra node from the default galaxy server where its execution
-# environment lacks them) and of the job templates (installed by the AAP
+# deployer's infra node from the target AAP's private automation hub, after
+# it synced this use case's hub collections) and of the job templates (installed by the AAP
 # project sync from the AAP's automation hub; the -secrets aap-content adds
 # them to the hub).
 collections:
