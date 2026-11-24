@@ -1,0 +1,26 @@
+---
+# Inert job of the regional resource sets: the job templates "<set> Read" and
+# "<set> Simulate Change" run it with fixed extra variables (no prompts) to
+# show who may launch what. It contacts nothing and changes nothing; the
+# simulated change only reports "changed".
+#
+# Extra variables from the job template: demo_resource_set, demo_owner,
+# demo_access, demo_operation (read | simulate_change).
+
+- name: Demonstrate access to a regional resource set
+  hosts: all
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Require a known operation
+      ansible.builtin.assert:
+        that: demo_operation in ['read', 'simulate_change']
+        fail_msg: "Unknown demo_operation {{ demo_operation }}"
+
+    - name: Report the permitted mock action
+      ansible.builtin.debug:
+        msg: >-
+          {{ demo_operation }} on {{ demo_resource_set }} (owner {{ demo_owner }},
+          access {{ demo_access }}) by {{ awx_user_name | default('unknown') }}.
+          No external system is contacted.
+      changed_when: demo_operation == 'simulate_change'

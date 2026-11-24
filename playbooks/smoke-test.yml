@@ -1,0 +1,47 @@
+---
+# Smoke test of the AD login: signs in to the AAP API as AD users (basic
+# authentication through the LDAPS authenticator; the first sign-in creates
+# the AAP user and applies the team mappings) and compares the job templates
+# each one sees in the regional organization with the expected list.
+#
+# Variables, from the job template / inventory:
+#   ad_smoke_aap_url          https://<AAP>, the AAP under test
+#   ad_smoke_organization     regional organization
+#   ad_smoke_users            list of {username, expected_job_templates}
+#   ad_demo_user_password     shared demo user password, injected by the
+#                             "Active Directory demo user" credential
+
+- name: Compare the job templates AD users see
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    # Sends the password; the next task reports status and names.
+    - name: Read the visible job templates as each AD user
+      ansible.builtin.uri:
+        url: >-
+          {{ ad_smoke_aap_url }}/api/controller/v2/job_templates/?page_size=200&organization__name={{ ad_smoke_organization | urlencode }}
+        url_username: "{{ item.username }}"
+        url_password: "{{ ad_demo_user_password }}"
+        force_basic_auth: true
+        validate_certs: true
+      loop: "{{ ad_smoke_users }}"
+      loop_control:
+        label: "{{ item.username }}"
+      register: smoke_job_templates
+      failed_when: false
+      no_log: true
+
+    - name: Check the visible job templates against the matrix
+      ansible.builtin.assert:
+        that:
+          - item.status == 200
+          - (item.json.results | map(attribute='name') | sort) == (item.item.expected_job_templates | sort)
+        fail_msg: >-
+          {{ item.item.username }}: HTTP {{ item.status }}, sees
+          {{ item.json.results | default([]) | map(attribute='name') | sort }},
+          expected {{ item.item.expected_job_templates | sort }}
+        success_msg: "{{ item.item.username }} sees exactly {{ item.item.expected_job_templates | sort }}"
+      loop: "{{ smoke_job_templates.results }}"
+      loop_control:
+        label: "{{ item.item.username }}"

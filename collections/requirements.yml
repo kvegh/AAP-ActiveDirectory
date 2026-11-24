@@ -1,0 +1,14 @@
+---
+# Collections of playbooks/aap-infra.yml (installed by the AutoDeploy
+# deployer's infra node from the default galaxy server where its execution
+# environment lacks them) and of the job templates (installed by the AAP
+# project sync from the AAP's automation hub; the -secrets aap-content adds
+# them to the hub).
+collections:
+  - name: ansible.windows
+    version: 3.8.0
+  - name: microsoft.ad
+    version: 1.12.1
+  # Only playbooks/aap-infra.yml: LDAPS certificate from the AutoDeploy CA.
+  - name: community.crypto
+    version: 3.6.0

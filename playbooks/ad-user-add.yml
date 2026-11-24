@@ -1,0 +1,30 @@
+---
+# Part 2 of the demo, AD administration from AAP: creates one AD user in its
+# country OU and adds it to the global group of its country and role, with
+# the native microsoft.ad.user module. The user gets the shared demo password,
+# so it can sign in to AAP at once with the access of that group.
+#
+# Variables, from the job template survey: ad_new_username, ad_new_country
+# (DK | NO | NZ | HU), ad_new_role (reader | executor | admin). From the
+# inventory: ad_dns_domain, ad_prefix, ad_root_ou. ad_demo_user_password from
+# the "Active Directory demo user" credential; WinRM login from the machine
+# credential.
+
+- name: Add an AD user to a country and role
+  hosts: ad_dc
+  gather_facts: false
+  tasks:
+    - name: Create the user in its global group
+      microsoft.ad.user:
+        name: "{{ ad_new_username }}"
+        path: "OU={{ ad_new_country }},{{ ad_root_ou }}"
+        upn: "{{ ad_new_username }}@{{ ad_dns_domain }}"
+        firstname: "{{ ad_new_country }}"
+        surname: "{{ ad_new_role }}"
+        password: "{{ ad_demo_user_password }}"
+        update_password: on_create
+        password_never_expires: true
+        enabled: true
+        groups:
+          add: ["{{ ad_prefix }}-GG-{{ ad_new_country }}-{{ ad_new_role }}"]
+        state: present

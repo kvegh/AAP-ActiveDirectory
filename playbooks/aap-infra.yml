@@ -1,0 +1,514 @@
+---
+# Infra of the Active Directory use case: everything outside AAP.
+#
+# Run once per target AAP by the AutoDeploy use case deployer (infra node), as
+# a nested ansible-playbook inside the deployer's execution environment, with
+# localhost as the only inventory:
+#
+#   ansible-playbook --inventory localhost, --vault-id cac@<password file> \
+#     -e usecase_target_aap=<AAP VM name> \
+#     -e usecase_secrets_dir=<absolute path of the -secrets checkout> \
+#     -e autodeploy_secrets_dir=<absolute path of the AutoDeploy private checkout> \
+#     playbooks/aap-infra.yml
+#
+# It builds its own targets from the -secrets checkout: plain configuration
+# from aap-infra/*.yml, the country matrix from aap-config/ad-matrix.yml,
+# secrets from env_variables.yml (vault ID cac). The AutoDeploy CA comes from
+# the AutoDeploy private checkout, the shared storage of values several use
+# cases need (user decision 2026-11-24; no copy in this use case): its key
+# from that repository's vault, its certificate from the AutoDeploy
+# inventory; the paths are in aap-infra/. Then:
+#   1. hypervisor: DHCP host entry of win-ad on the management network, the
+#      win-ad VM from the Windows Server base image;
+#   2. win-ad: WinRM, Administrator password, OS check, host name,
+#      evaluation activation (no Windows Update, see README);
+#   3. LDAPS certificate for win-ad, issued by the AutoDeploy CA on localhost,
+#      only when win-ad does not already serve a valid one;
+#   4. win-ad: CA trust, LDAPS certificate, new forest (reboots), OUs, groups,
+#      the LDAP bind account and the demo users of the matrix;
+#   5. localhost: LDAPS answers with a certificate the AutoDeploy CA verifies.
+#
+# Rerunnable: an existing host entry or VM is left as it is; AD objects are
+# declared state. no_log only where a value is not masked by the module's own
+# argument spec (vault loading, key file, connection passwords, set_fact). win-ad is not part of AAP's lifecycle: no destroy here.
+#
+# Needs in the execution environment: ansible.windows, microsoft.ad,
+# community.crypto (collections/requirements.yml; the deployer installs what
+# is missing), Python pywinrm and cryptography, an SSH client.
+
+- name: Build the targets from the -secrets checkout
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Require the AutoDeploy private checkout from the deployer
+      ansible.builtin.assert:
+        that: autodeploy_secrets_dir is defined and autodeploy_secrets_dir is directory
+        fail_msg: The deployer must pass autodeploy_secrets_dir (AutoDeploy v0.5.0 or later, see README).
+
+    - name: Load the infra configuration
+      ansible.builtin.include_vars:
+        dir: "{{ usecase_secrets_dir }}/aap-infra"
+        extensions: [yml]
+        # aap-infra/README.md
+        ignore_unknown_extensions: true
+
+    - name: Load the country matrix
+      ansible.builtin.include_vars:
+        file: "{{ usecase_secrets_dir }}/aap-config/ad-matrix.yml"
+
+    - name: Load the use case secrets
+      ansible.builtin.include_vars:
+        file: "{{ usecase_secrets_dir }}/env_variables.yml"
+      no_log: true
+
+    # Same vault password (vault ID cac). Under one name, so none of its
+    # values mixes with this use case's variables.
+    - name: Load the AutoDeploy vault (CA key)
+      ansible.builtin.include_vars:
+        file: "{{ autodeploy_secrets_dir }}/{{ ad_infra_autodeploy_ca.key_vault }}"
+        name: autodeploy_vault
+      no_log: true
+
+    # SSH key, LDAPS key and PFX live only in this run's temporary directory;
+    # the last play removes it.
+    - name: Create a temporary directory for keys and certificates
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .ad-infra
+      register: ad_infra_tmp
+
+    - name: Write the SSH private key
+      ansible.builtin.copy:
+        content: "{{ vaulted_ad_hypervisor_ssh_key_data }}"
+        dest: "{{ ad_infra_tmp.path }}/ssh.key"
+        mode: "0600"
+      no_log: true
+
+    # The certificate is a plain variable (autodeploy_ca_cert) of the
+    # AutoDeploy inventory file. include_vars, not lookup + from_yaml: the
+    # file has !unsafe values, which only Ansible's own loader reads. Only the
+    # certificate is used; ansible-core 2.19+ templates lazily, so the file's
+    # other templates (meant for AutoDeploy's runs) are never evaluated
+    # (checked in ee-proj-aap-cac 2.0.0, ansible-core 2.20).
+    - name: Load the AutoDeploy inventory file (CA certificate)
+      ansible.builtin.include_vars:
+        file: "{{ autodeploy_secrets_dir }}/{{ ad_infra_autodeploy_ca.cert_file }}"
+        name: autodeploy_inventory_file
+
+    - name: Write the AutoDeploy CA certificate
+      ansible.builtin.copy:
+        content: >-
+          {{ autodeploy_inventory_file.controller_inventories
+             | selectattr('name', 'equalto', ad_infra_autodeploy_ca.cert_inventory)
+             | map(attribute='variables.autodeploy_ca_cert') | first }}
+        dest: "{{ ad_infra_tmp.path }}/autodeploy-ca.crt"
+        mode: "0644"
+
+    - name: Add the hypervisor
+      ansible.builtin.add_host:
+        name: hypervisor
+        ansible_host: "{{ ad_infra_hypervisor.address }}"
+        ansible_port: "{{ ad_infra_hypervisor.port }}"
+        ansible_user: "{{ ad_infra_hypervisor.user }}"
+        ansible_ssh_private_key_file: "{{ ad_infra_tmp.path }}/ssh.key"
+        ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+
+    # The domain Administrator password from the start: the first run sets it
+    # with the base image's password (task variable below), later runs log in
+    # with it directly.
+    - name: Add the domain controller
+      ansible.builtin.add_host:
+        name: "{{ ad_infra_vm.name }}"
+        groups: ad_dc
+        ansible_host: "{{ ad_infra_vm.ip }}"
+        ansible_connection: winrm
+        ansible_port: 5986
+        ansible_winrm_transport: ntlm
+        ansible_winrm_server_cert_validation: ignore
+        ansible_user: "{{ ad_infra_admin_user }}"
+        ansible_password: "{{ vaulted_ad_domain_admin_password }}"
+      no_log: true
+
+- name: Create the domain controller VM on the hypervisor
+  hosts: hypervisor
+  gather_facts: false
+  become: true
+  vars:
+    network: "{{ hostvars['localhost'].ad_infra_network }}"
+    vm: "{{ hostvars['localhost'].ad_infra_vm }}"
+    image: "{{ hostvars['localhost'].ad_infra_image }}"
+    vm_disk: "{{ hostvars['localhost'].ad_infra_vm_dir }}/{{ vm.name }}.qcow2"
+  tasks:
+    # No certified module manages libvirt networks; virsh is the baseline.
+    - name: Read the management network
+      ansible.builtin.command:
+        argv: [virsh, net-dumpxml, "{{ network }}"]
+      register: network_xml
+      changed_when: false
+
+    # The management network belongs to the hypervisor build; only this
+    # use case's entry is added, once.
+    - name: Add the DHCP host entry of win-ad
+      ansible.builtin.command:
+        argv:
+          - virsh
+          - net-update
+          - "{{ network }}"
+          - add-last
+          - ip-dhcp-host
+          - "<host mac='{{ vm.mac }}' name='{{ vm.name }}' ip='{{ vm.ip }}'/>"
+          - --live
+          - --config
+      when: vm.mac | lower not in network_xml.stdout | lower
+      changed_when: true
+
+    - name: List the defined VMs
+      ansible.builtin.command:
+        argv: [virsh, list, --all, --name]
+      register: defined_vms
+      changed_when: false
+
+    # A defined VM is never touched. A disk left by an earlier failed run is
+    # overwritten, so virt-install only ever sees a complete copy.
+    - name: Copy the base image to the VM disk
+      ansible.builtin.command:
+        argv: [qemu-img, convert, -f, qcow2, -O, qcow2, -S, 4k, "{{ image.path }}", "{{ vm_disk }}"]
+      when: vm.name not in defined_vms.stdout_lines
+      changed_when: true
+
+    # e1000e NIC and a SATA disk: the image needs no VirtIO drivers.
+    - name: Create and start the VM
+      ansible.builtin.command:
+        argv:
+          - virt-install
+          - --import
+          - --name
+          - "{{ vm.name }}"
+          - --memory
+          - "{{ vm.memory_mib }}"
+          - --vcpus
+          - "{{ vm.vcpus }}"
+          - --machine
+          - q35
+          - --osinfo
+          - "{{ image.osinfo }}"
+          - --disk
+          - "path={{ vm_disk }},format=qcow2,bus=sata"
+          - --network
+          - "network={{ network }},mac={{ vm.mac }},model=e1000e"
+          - --graphics
+          - vnc,listen=127.0.0.1
+          - --boot
+          - "{{ image.boot }}"
+          - --noautoconsole
+      when: vm.name not in defined_vms.stdout_lines
+      changed_when: true
+
+    # Guards against an older VM of the same name with another NIC (and so
+    # another address).
+    - name: Read the VM's NICs
+      ansible.builtin.command:
+        argv: [virsh, domiflist, "{{ vm.name }}"]
+      register: vm_nics
+      changed_when: false
+
+    - name: Check that the VM has the configured NIC
+      ansible.builtin.assert:
+        that: vm.mac | lower in vm_nics.stdout | lower
+        fail_msg: "{{ vm.name }} exists without the NIC {{ vm.mac }}; remove the old VM first."
+
+- name: Prepare the domain controller
+  hosts: ad_dc
+  gather_facts: false
+  vars:
+    infra: "{{ hostvars['localhost'] }}"
+    # Installed Windows license with a product key (the CIM class of slmgr).
+    activate_license_query: >-
+      Get-CimInstance -ClassName SoftwareLicensingProduct
+      -Filter "ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL"
+      | Where-Object { -not $_.LicenseIsAddon }
+  tasks:
+    - name: Wait for WinRM
+      ansible.builtin.wait_for:
+        host: "{{ infra.ad_infra_vm.ip }}"
+        port: 5986
+        timeout: "{{ infra.ad_infra_wait_timeout }}"
+      delegate_to: localhost
+
+    - name: Check whether the domain Administrator password is already set
+      ansible.windows.win_ping:
+      ignore_unreachable: true
+      register: ad_admin_login
+
+    - name: Set the domain Administrator password (first run, base image password)
+      ansible.windows.win_user:
+        name: "{{ infra.ad_infra_admin_user }}"
+        password: "{{ infra.vaulted_ad_domain_admin_password }}"
+        password_never_expires: true
+      vars:
+        ansible_password: "{{ infra.vaulted_ad_image_admin_password }}"
+      when: ad_admin_login is unreachable
+      no_log: true
+
+    - name: Read the installed OS
+      ansible.builtin.setup:
+        gather_subset: [distribution]
+
+    - name: Check that the VM runs the configured Windows Server version
+      ansible.builtin.assert:
+        that: ("Windows Server " ~ infra.ad_infra_image.version) in ansible_facts.distribution
+        fail_msg: "{{ inventory_hostname }} runs {{ ansible_facts.distribution }}, not Windows Server {{ infra.ad_infra_image.version }}"
+
+    - name: Set the host name
+      ansible.windows.win_hostname:
+        name: "{{ infra.ad_infra_vm.hostname }}"
+      register: ad_hostname
+
+    - name: Reboot for the host name
+      ansible.windows.win_reboot:
+        reboot_timeout: "{{ infra.ad_infra_wait_timeout }}"
+      when: ad_hostname.reboot_required
+
+    # No module covers Windows licensing; the CIM method of the installed
+    # license is the same as slmgr /ato, but reports errors. win-ad reaches
+    # the activation service through the NAT of the management network.
+    - name: Read the license status
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $Ansible.Result = [int](@({{ activate_license_query }})[0].LicenseStatus)
+      register: activate_status
+
+    # LicenseStatus 1 = licensed.
+    - name: Activate the evaluation license
+      ansible.windows.win_powershell:
+        script: |
+          $license = @({{ activate_license_query }})[0]
+          $result = Invoke-CimMethod -InputObject $license -MethodName Activate
+          if ($result.ReturnValue -ne 0) { throw "Activation failed: $($result.ReturnValue)" }
+          $status = [int](@({{ activate_license_query }})[0].LicenseStatus)
+          if ($status -ne 1) { throw "License status after activation: $status" }
+      register: activate_result
+      retries: 12
+      delay: 10
+      until: activate_result is succeeded
+      when: activate_status.result != 1
+
+- name: Issue the LDAPS certificate with the AutoDeploy CA
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ad_dc_fqdn: "{{ ad_infra_vm.hostname }}.{{ ad_domain.dns_domain }}"
+    tmp: "{{ ad_infra_tmp.path }}"
+  tasks:
+    # Fails while LDAPS is not up yet (first run) or when the certificate is
+    # expired or not signed by the AutoDeploy CA; a valid one is kept.
+    - name: Read the certificate win-ad serves on LDAPS
+      community.crypto.get_certificate:
+        host: "{{ ad_infra_vm.ip }}"
+        port: 636
+        ca_cert: "{{ ad_infra_tmp.path }}/autodeploy-ca.crt"
+        timeout: 10
+      register: ad_ldaps_current
+      failed_when: false
+
+    - name: Issue a new LDAPS certificate
+      when: ad_ldaps_current.cert is not defined
+      block:
+        - name: Create the LDAPS private key
+          community.crypto.openssl_privatekey:
+            path: "{{ tmp }}/ldaps.key"
+            type: RSA
+            size: 2048
+
+        # AD DS takes a certificate from the computer store whose subject or
+        # SAN carries the DC's FQDN, with Server Authentication; AAP connects
+        # by address, hence the IP SAN.
+        - name: Create the LDAPS certificate signing request
+          community.crypto.openssl_csr:
+            path: "{{ tmp }}/ldaps.csr"
+            privatekey_path: "{{ tmp }}/ldaps.key"
+            common_name: "{{ ad_dc_fqdn }}"
+            subject_alt_name:
+              - "DNS:{{ ad_dc_fqdn }}"
+              - "IP:{{ ad_infra_vm.ip }}"
+            key_usage: [digitalSignature, keyEncipherment]
+            key_usage_critical: true
+            extended_key_usage: [serverAuth]
+
+        - name: Sign the LDAPS certificate with the AutoDeploy CA
+          community.crypto.x509_certificate:
+            path: "{{ tmp }}/ldaps.crt"
+            csr_path: "{{ tmp }}/ldaps.csr"
+            provider: ownca
+            ownca_path: "{{ tmp }}/autodeploy-ca.crt"
+            ownca_privatekey_content: "{{ autodeploy_vault.vaulted_autodeploy_ca_key }}"
+            ownca_not_after: "+{{ ad_infra_ldaps_cert_days }}d"
+
+        # Random, only for this transfer; set once so every use sees the same value.
+        - name: Choose the PFX transfer password
+          ansible.builtin.set_fact:
+            ad_ldaps_pfx_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+          no_log: true
+
+        # Windows imports a key only as PKCS#12; compatibility2022 is the
+        # encryption Windows Server 2019 and later read.
+        - name: Bundle key and certificate as PFX
+          community.crypto.openssl_pkcs12:
+            path: "{{ tmp }}/ldaps.pfx"
+            privatekey_path: "{{ tmp }}/ldaps.key"
+            certificate_path: "{{ tmp }}/ldaps.crt"
+            friendly_name: LDAPS
+            passphrase: "{{ ad_ldaps_pfx_password }}"
+            encryption_level: compatibility2022
+            mode: "0600"
+
+- name: Install the forest and the AD objects
+  hosts: ad_dc
+  gather_facts: false
+  vars:
+    infra: "{{ hostvars['localhost'] }}"
+    tmp: "{{ infra.ad_infra_tmp.path }}"
+    pfx_remote: 'C:\Windows\Temp\ad-ldaps.pfx'
+  tasks:
+    - name: Copy the AutoDeploy CA certificate
+      ansible.windows.win_copy:
+        src: "{{ tmp }}/autodeploy-ca.crt"
+        dest: 'C:\Windows\Temp\autodeploy-ca.crt'
+
+    - name: Trust the AutoDeploy CA
+      ansible.windows.win_certificate_store:
+        path: 'C:\Windows\Temp\autodeploy-ca.crt'
+        store_location: LocalMachine
+        store_name: Root
+        state: present
+
+    - name: Install the new LDAPS certificate
+      when: infra.ad_ldaps_pfx_password is defined
+      block:
+        - name: Copy the LDAPS PFX
+          ansible.windows.win_copy:
+            src: "{{ tmp }}/ldaps.pfx"
+            dest: "{{ pfx_remote }}"
+
+        - name: Import the LDAPS certificate with a non-exportable key
+          ansible.windows.win_certificate_store:
+            path: "{{ pfx_remote }}"
+            password: "{{ infra.ad_ldaps_pfx_password }}"
+            store_location: LocalMachine
+            store_name: My
+            key_storage: machine
+            key_exportable: false
+            state: present
+      always:
+        - name: Remove the LDAPS PFX
+          ansible.windows.win_file:
+            path: "{{ pfx_remote }}"
+            state: absent
+
+    # Installs AD DS and DNS and reboots as often as needed. The local
+    # Administrator becomes the domain Administrator with the same password.
+    - name: Create the forest
+      microsoft.ad.domain:
+        dns_domain_name: "{{ infra.ad_domain.dns_domain }}"
+        domain_netbios_name: "{{ infra.ad_domain.netbios }}"
+        safe_mode_password: "{{ infra.vaulted_ad_dsrm_password }}"
+        install_dns: true
+        reboot: true
+        reboot_timeout: "{{ infra.ad_infra_wait_timeout }}"
+      register: ad_forest
+
+    # AD DS picks the LDAPS certificate at start; a new forest has just
+    # started with it, an existing one needs the restart.
+    - name: Reboot to load the new LDAPS certificate
+      ansible.windows.win_reboot:
+        reboot_timeout: "{{ infra.ad_infra_wait_timeout }}"
+      when: infra.ad_ldaps_pfx_password is defined and not ad_forest.changed
+
+    # The AD modules use AD Web Services, which start a while after boot.
+    - name: Create the OUs
+      microsoft.ad.ou:
+        name: "{{ item.name }}"
+        path: "{{ item.path }}"
+        state: present
+      loop: "{{ infra.ad_ous }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: ad_ou
+      retries: 30
+      delay: 10
+      until: ad_ou is succeeded
+
+    # The matrix lists the global groups before the domain-local groups that
+    # contain them.
+    - name: Create the groups with their members
+      microsoft.ad.group:
+        name: "{{ item.name }}"
+        path: "{{ item.path }}"
+        scope: "{{ item.scope }}"
+        category: security
+        members:
+          set: "{{ item.members }}"
+        state: present
+      loop: "{{ infra.ad_groups }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Create the LDAP bind account of the AAP authenticator
+      microsoft.ad.user:
+        name: "{{ infra.ad_domain.bind_username }}"
+        path: "{{ infra.ad_domain.root_ou }}"
+        upn: "{{ infra.ad_domain.bind_username }}@{{ infra.ad_domain.dns_domain }}"
+        password: "{{ infra.vaulted_ad_bind_password }}"
+        update_password: when_changed
+        password_never_expires: true
+        enabled: true
+        state: present
+
+    # One shared password for all demo users (one secret for the presenter).
+    - name: Create the demo users in their global groups
+      microsoft.ad.user:
+        name: "{{ item.username }}"
+        path: "{{ item.path }}"
+        upn: "{{ item.username }}@{{ infra.ad_domain.dns_domain }}"
+        firstname: "{{ item.region_label }}"
+        surname: "{{ item.role }}"
+        password: "{{ infra.vaulted_ad_demo_user_password }}"
+        update_password: when_changed
+        password_never_expires: true
+        enabled: true
+        groups:
+          set: ["{{ item.group }}"]
+        state: present
+      loop: "{{ infra.ad_users }}"
+      loop_control:
+        label: "{{ item.username }}"
+
+- name: Verify LDAPS and clean up
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    # NTDS opens 636 shortly after boot.
+    - name: Verify that LDAPS answers with a certificate of the AutoDeploy CA
+      community.crypto.get_certificate:
+        host: "{{ ad_infra_vm.ip }}"
+        port: 636
+        ca_cert: "{{ ad_infra_tmp.path }}/autodeploy-ca.crt"
+        timeout: 10
+      register: ad_ldaps_check
+      retries: 30
+      delay: 10
+      until: ad_ldaps_check is succeeded
+
+    - name: Check the LDAPS certificate's subject
+      ansible.builtin.assert:
+        that: ad_ldaps_check.subject.CN == ad_infra_vm.hostname ~ '.' ~ ad_domain.dns_domain
+        fail_msg: "LDAPS serves {{ ad_ldaps_check.subject }}"
+
+    - name: Remove the temporary keys and certificates
+      ansible.builtin.file:
+        path: "{{ ad_infra_tmp.path }}"
+        state: absent
