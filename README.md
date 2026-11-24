@@ -1,6 +1,6 @@
 # Active Directory login and administration with AAP
 
-Version 0.1.0. Ansible Automation Platform (AAP) users sign in with their
+Version 0.1.1. Ansible Automation Platform (AAP) users sign in with their
 Active Directory (AD) account over LDAPS. AD group membership decides which
 AAP teams they join, and the teams hold scoped permissions on regional
 automation resources. AAP also administers the AD side: the domain
@@ -152,9 +152,13 @@ and a valid LDAPS certificate is kept.
 | vault ID `cac` | opens both vaults (same password) |
 
 The AutoDeploy private repository is the shared storage for values several
-use cases need (user decision 2026-11-24). The playbook reads the shared
-AutoDeploy CA from it and keeps no copy: the key `vaulted_autodeploy_ca_key`
-from `usecases/autodeploy/env_variables.yml`, the certificate
+use cases need (user decision 2026-11-24, don't copy). The playbook reads
+from it and keeps no copy: from the vault
+`usecases/autodeploy/env_variables.yml` the SSH key of the automation
+account (`vaulted_controller_credentials_hactar_ng_ansible_ngng_ssh_key_data`),
+the Windows Server base image's local Administrator password
+(`vaulted_windows_base_image_admin_password`) and the CA key
+`vaulted_autodeploy_ca_key`; the certificate
 `autodeploy_ca_cert` from the AutoDeploy-NGNG inventory file (paths in
 `aap-infra/ad-infra.yml`). The inventory file is read with `include_vars`,
 not `from_yaml`, because it has `!unsafe` values; only the certificate is

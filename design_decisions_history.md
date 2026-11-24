@@ -1,5 +1,25 @@
 # Design decisions history
 
+## 2026-11-24 (CET): no copied secrets, version 0.1.1
+
+User decision 2026-11-24 (CET): "don't copy". The AutoDeploy private
+repository is the shared storage for values several use cases need; use case
+vaults hold no copies of them. Implementation `262ef48` (0.1.1), private
+`453c2ff` (0.1.1), AutoDeploy private `4b1c9ed` (0.4.2).
+
+- `playbooks/aap-infra.yml` reads the SSH key of the automation account
+  (`vaulted_controller_credentials_hactar_ng_ansible_ngng_ssh_key_data`) and
+  the base image's Administrator password
+  (`vaulted_windows_base_image_admin_password`, new in the AutoDeploy vault,
+  a property of the base images AutoDeploy downloads) from the AutoDeploy
+  vault it already loads as `autodeploy_vault`.
+- The copies `vaulted_ad_hypervisor_ssh_key_data` and
+  `vaulted_ad_image_admin_password` are removed from the private vault. This
+  supersedes the 0.1.0 agent choice to copy them.
+- Not deployed. The next deploy must show the infra node reaching the
+  hypervisor with the AutoDeploy key and, on a new win-ad, the first
+  Administrator login with the AutoDeploy base image password.
+
 ## 2026-11-24 (CET): first implementation, version 0.1.0
 
 User go-ahead 2026-11-24 13:05 CET (bead-wd-0gnz.45.7): code only, commit and
