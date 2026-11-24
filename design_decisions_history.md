@@ -1,5 +1,17 @@
 # Design decisions history
 
+## 2026-11-24 16:57 (CET): DNS monitoring tests stay a separate use case
+
+User decision 2026-11-24 (CET): "keep the usecases apart". DNS tests for
+monitoring may use the DNS Server role on win-ad (installed with the forest,
+`install_dns: true`), but they are not part of this use case. No code here
+creates their zone, records or service stops. Agent proposal discussed before
+the decision: a separate zone under the reserved `.test` domain, managed with
+`community.windows.win_dns_zone`/`win_dns_record`. Rationale (inference, not
+tested): AAP reaches the domain controller by IP address, so a stopped DNS
+service does not break AAP logins; AD deploy or administration jobs should not
+run while DNS is stopped. Both use cases run at separate times. No code change.
+
 ## 2026-11-24 (CET): no copied secrets, version 0.1.1
 
 User decision 2026-11-24 (CET): "don't copy". The AutoDeploy private
