@@ -1,23 +1,14 @@
 # TODO
 
-- **Deployer dispatch (blocks the team roles)**: the AutoDeploy deployer
-  applies neither `gateway_role_definitions` (config node) nor
-  `gateway_role_team_assignments` (content node). Without them the teams
-  exist but hold no roles and the smoke test fails. Proposed (AutoDeploy,
-  not this repository): one dispatch entry each, the role definitions after
-  the teams in `usecase-aap-config.yml`, the assignments after the workflows
-  in `usecase-aap-content.yml`.
-- **First deploy checks**:
-  - the AAP installer puts `ca_tls_cert` into the gateway container's trust
-    store (LDAPS verification of the authenticator);
-  - the gateway accepts basic authentication for LDAP users (smoke test);
-  - `microsoft.ad` is in Red Hat's certified content (hub remote
-    `rh-certified`), `community.crypto` comes from Galaxy;
-  - the base image's WinRM firewall rule allows the deploying AAP VM's DHCP
-    address;
-  - no older VM `win-ad` exists on the hypervisor (the playbook stops if its
-    NIC differs);
-  - the job EE reaches the AD AAP by its public name (smoke test).
+- **First deploy verified** (v33, 2026-11-24, Workflow 6 and Job 22 — Active
+  Directory - Smoke Test): the deployer applies the role definitions and the
+  75 team role assignments (AutoDeploy v0.6.0); the gateway verifies LDAPS
+  with the installer's CA; basic authentication works for LDAP users;
+  `microsoft.ad` 1.12.1 syncs from `rh-certified`; WinRM from the AAP VM's
+  DHCP address works; the job EE reaches the AAP's public name.
+  Gap: the infra node installs `community.crypto` (not certified, no
+  certified module issues certificates from an own CA) and, as the deployer
+  EE lacks them, also `ansible.windows`/`microsoft.ad` from Galaxy.
 - **Hypervisor build cleanup** (AutoDeploy): the old reservation
   of the old AD VM and its DNS host entry in the AutoDeploy-NGNG inventory
   are obsolete; this use case uses its own address (private repository).
