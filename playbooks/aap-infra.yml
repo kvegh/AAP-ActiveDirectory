@@ -21,8 +21,9 @@
 # aap-infra/. Then:
 #   1. hypervisor: DHCP host entry of win-ad on the management network, the
 #      win-ad VM from the Windows Server base image;
-#   2. win-ad: WinRM, Administrator password, OS check, host name,
-#      evaluation activation (no Windows Update, see README);
+#   2. win-ad: WinRM, Administrator password, evaluation rearm (only a VM
+#      created in this run, with a reboot), OS check, host name, evaluation
+#      activation (no Windows Update, see README);
 #   3. LDAPS certificate for win-ad, issued by the AutoDeploy CA on localhost,
 #      only when win-ad does not already serve a valid one;
 #   4. win-ad: CA trust, LDAPS certificate, new forest (reboots), OUs, groups,
@@ -253,6 +254,23 @@
         ansible_password: "{{ infra.autodeploy_vault.vaulted_windows_base_image_admin_password }}"
       when: ad_admin_login is unreachable
       no_log: true
+
+    # Every fresh clone gets a full evaluation period (user decision
+    # 2026-11-24, as in Windows patching): a clone otherwise inherits the
+    # base image's evaluation clock. The rearm count is limited (1 on the
+    # Server 2025 image), so only a VM created in this run is rearmed, never
+    # on reruns. After the password task (the rearm needs a login), before
+    # activation and the forest; the rearm needs a reboot.
+    - name: Rearm the evaluation of a VM created in this run
+      ansible.windows.win_command: cscript //nologo C:\Windows\System32\slmgr.vbs /rearm
+      when: infra.ad_infra_vm.name not in hostvars['hypervisor'].defined_vms.stdout_lines
+      changed_when: true
+      register: ad_rearm
+
+    - name: Reboot after the rearm
+      ansible.windows.win_reboot:
+        reboot_timeout: "{{ infra.ad_infra_wait_timeout }}"
+      when: ad_rearm is changed
 
     - name: Read the installed OS
       ansible.builtin.setup:
