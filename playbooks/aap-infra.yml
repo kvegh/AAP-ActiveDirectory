@@ -13,11 +13,12 @@
 #
 # It builds its own targets from the -secrets checkout: plain configuration
 # from aap-infra/*.yml, the country matrix from aap-config/ad-matrix.yml,
-# secrets from env_variables.yml (vault ID cac). The AutoDeploy CA comes from
-# the AutoDeploy private checkout, the shared storage of values several use
-# cases need (user decision 2026-11-24; no copy in this use case): its key
-# from that repository's vault, its certificate from the AutoDeploy
-# inventory; the paths are in aap-infra/. Then:
+# secrets from env_variables.yml (vault ID cac). The AutoDeploy private
+# checkout is the shared storage of values several use cases need (user
+# decision 2026-11-24; no copy in this use case): from its vault the SSH key
+# of the automation account, the base image's Administrator password and the
+# AutoDeploy CA key, from its inventory the CA certificate; the paths are in
+# aap-infra/. Then:
 #   1. hypervisor: DHCP host entry of win-ad on the management network, the
 #      win-ad VM from the Windows Server base image;
 #   2. win-ad: WinRM, Administrator password, OS check, host name,
@@ -64,7 +65,7 @@
 
     # Same vault password (vault ID cac). Under one name, so none of its
     # values mixes with this use case's variables.
-    - name: Load the AutoDeploy vault (CA key)
+    - name: Load the AutoDeploy vault (SSH key, base image password, CA key)
       ansible.builtin.include_vars:
         file: "{{ autodeploy_secrets_dir }}/{{ ad_infra_autodeploy_ca.key_vault }}"
         name: autodeploy_vault
@@ -80,7 +81,7 @@
 
     - name: Write the SSH private key
       ansible.builtin.copy:
-        content: "{{ vaulted_ad_hypervisor_ssh_key_data }}"
+        content: "{{ autodeploy_vault.vaulted_controller_credentials_hactar_ng_ansible_ngng_ssh_key_data }}"
         dest: "{{ ad_infra_tmp.path }}/ssh.key"
         mode: "0600"
       no_log: true
@@ -247,7 +248,7 @@
         password: "{{ infra.vaulted_ad_domain_admin_password }}"
         password_never_expires: true
       vars:
-        ansible_password: "{{ infra.vaulted_ad_image_admin_password }}"
+        ansible_password: "{{ infra.autodeploy_vault.vaulted_windows_base_image_admin_password }}"
       when: ad_admin_login is unreachable
       no_log: true
 
