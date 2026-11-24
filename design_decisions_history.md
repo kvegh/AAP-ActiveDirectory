@@ -7,7 +7,7 @@ infra failed at "Wait for WinRM": `delegate_to: localhost` connected by SSH,
 because the deployer's inventory `localhost,` gives localhost no local
 connection. The task now sets `connection: local` (tested locally: fails
 without, passes with). The VM and the DHCP host entry were already created.
-Agent fix under the deploy go-ahead. Commit: see git log.
+Agent fix under the deploy go-ahead. Commit: `ce42f85` (0.1.2).
 
 ## 2026-11-24 16:57 (CET): DNS monitoring tests stay a separate use case
 
