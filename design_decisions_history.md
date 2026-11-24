@@ -1,5 +1,25 @@
 # Design decisions history
 
+## 2026-11-24 (CET): evaluation rearm of a fresh win-ad, version 0.1.3
+
+User decision 2026-11-24 (CET): rearm every Windows clone right after
+cloning. `playbooks/aap-infra.yml` runs `cscript //nologo
+C:\Windows\System32\slmgr.vbs /rearm` (`ansible.windows.win_command`,
+`changed_when: true`) and then `ansible.windows.win_reboot`, only when win-ad
+is not in the hypervisor's pre-creation list of defined VMs (the existing
+"already defined" detection). Placed after the WinRM wait and the
+Administrator password task (the rearm needs a login), before the OS check,
+activation and the forest. Never on reruns: the Server 2025 image has a
+rearm count of 1. Mirrors Windows patching `ee6a53d` (v2.1.7).
+Implementation commit: `d2a91c2` (0.1.3).
+
+- Not deployed; win-ad on v33 (created by 0.1.2) is not touched and keeps
+  its current evaluation. A VM left defined by an earlier failed run is not
+  rearmed either.
+- Verify at the next fresh AD deploy: the license status after the rearm
+  (`slmgr /dlv`, full evaluation period) and that the activation task
+  succeeds afterwards.
+
 ## 2026-11-24 17:30 (CET): WinRM wait runs locally, version 0.1.2
 
 First deploy on v33 (bead bead-wd-0gnz.45.8): Job 5 — Deploy UseCase AAP

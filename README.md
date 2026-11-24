@@ -135,12 +135,20 @@ ansible-playbook --inventory localhost, --vault-id cac@<password file> \
 Steps: DHCP host entry and VM on the hypervisor (`virsh`, `qemu-img`,
 `virt-install`, as in Windows patching); WinRM; the Administrator password
 (the base image's password once, then the domain Administrator password);
-OS version check; host name; evaluation activation; LDAPS certificate; the
-forest (`microsoft.ad.domain`, reboots); OUs, groups, the LDAP bind account
-and the 12 users (`microsoft.ad.ou/group/user`, loops over the matrix);
-finally a TLS check of LDAPS against the AutoDeploy CA. Rerunnable: an
-existing host entry or VM is left as it is, AD objects are declared state,
-and a valid LDAPS certificate is kept.
+evaluation rearm (new VM only); OS version check; host name; evaluation
+activation; LDAPS certificate; the forest (`microsoft.ad.domain`, reboots);
+OUs, groups, the LDAP bind account and the 12 users
+(`microsoft.ad.ou/group/user`, loops over the matrix); finally a TLS check
+of LDAPS against the AutoDeploy CA. Rerunnable: an existing host entry or VM
+is left as it is, AD objects are declared state, and a valid LDAPS
+certificate is kept.
+
+**Evaluation rearm.** A win-ad created in this run gets
+`slmgr.vbs /rearm` and a reboot right after the first login, before
+activation and the forest, so every clone starts a full evaluation period
+instead of the base image's clock (user decision 2026-11-24, as in Windows
+patching). An existing VM is never rearmed: the Server 2025 image allows one
+rearm only.
 
 **Contract with the deployer** (AutoDeploy v0.5.0 or later):
 
