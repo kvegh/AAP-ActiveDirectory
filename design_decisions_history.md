@@ -1,5 +1,26 @@
 # Design decisions history
 
+## 2026-11-26 (CET): one password for local and domain Administrator, version 0.1.5
+
+User decision 2026-11-26 (CET), bead bead-wd-0gnz.45.14: the win-ad domain
+Administrator uses the Windows base image password
+(`vaulted_windows_base_image_admin_password`, AutoDeploy vault, the shared
+storage). `playbooks/aap-infra.yml` drops the first-run password switch
+(`win_ping` probe plus `win_user`) and connects to win-ad with that password
+on every run; `vaulted_ad_domain_admin_password` is removed (private
+v0.1.3, `8e78b73`: vault and credential "Active Directory Domain Admin").
+The DSRM password stays its own vault value. Reason: one Windows
+Administrator password for all demo VMs, so one Windows machine credential
+serves both use cases (e.g. the shutdown job template of Windows patching).
+Implementation commit: `a666874` (0.1.5).
+
+- The coordinator changed the live win-ad (v33 deploy) Administrator
+  password to the base image password before this change.
+- Not applied: v33 is shut off; the AD CaC (content: credential) is applied
+  with the next AD deploy. Verify then that `aap-infra.yml` logs in on a
+  fresh and on an existing win-ad, and that "Active Directory - Add User"
+  works with the updated credential.
+
 ## 2026-11-24 (CET): evaluation rearm of a fresh win-ad, version 0.1.3
 
 User decision 2026-11-24 (CET): rearm every Windows clone right after
