@@ -1,6 +1,6 @@
 # Active Directory login and administration with AAP
 
-Version 0.1.2. Ansible Automation Platform (AAP) users sign in with their
+Version 0.1.5. Ansible Automation Platform (AAP) users sign in with their
 Active Directory (AD) account over LDAPS. AD group membership decides which
 AAP teams they join, and the teams hold scoped permissions on regional
 automation resources. AAP also administers the AD side: the domain
@@ -133,9 +133,10 @@ ansible-playbook --inventory localhost, --vault-id cac@<password file> \
 ```
 
 Steps: DHCP host entry and VM on the hypervisor (`virsh`, `qemu-img`,
-`virt-install`, as in Windows patching); WinRM; the Administrator password
-(the base image's password once, then the domain Administrator password);
-evaluation rearm (new VM only); OS version check; host name; evaluation
+`virt-install`, as in Windows patching); WinRM as Administrator with the
+base image's password, which is also the domain Administrator's password
+(the forest keeps it; user decision 2026-11-26, no separate domain
+Administrator secret, no password change); evaluation rearm (new VM only); OS version check; host name; evaluation
 activation; LDAPS certificate; the forest (`microsoft.ad.domain`, reboots);
 OUs, groups, the LDAP bind account and the 12 users
 (`microsoft.ad.ou/group/user`, loops over the matrix); finally a TLS check

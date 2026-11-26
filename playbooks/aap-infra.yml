@@ -21,9 +21,10 @@
 # aap-infra/. Then:
 #   1. hypervisor: DHCP host entry of win-ad on the management network, the
 #      win-ad VM from the Windows Server base image;
-#   2. win-ad: WinRM, Administrator password, evaluation rearm (only a VM
-#      created in this run, with a reboot), OS check, host name, evaluation
-#      activation (no Windows Update, see README);
+#   2. win-ad: WinRM (Administrator with the base image password, also the
+#      domain Administrator's), evaluation rearm (only a VM created in this
+#      run, with a reboot), OS check, host name, evaluation activation (no
+#      Windows Update, see README);
 #   3. LDAPS certificate for win-ad, issued by the AutoDeploy CA on localhost,
 #      only when win-ad does not already serve a valid one;
 #   4. win-ad: CA trust, LDAPS certificate, new forest (reboots), OUs, groups,
@@ -116,9 +117,10 @@
         ansible_ssh_private_key_file: "{{ ad_infra_tmp.path }}/ssh.key"
         ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
 
-    # The domain Administrator password from the start: the first run sets it
-    # with the base image's password (task variable below), later runs log in
-    # with it directly.
+    # One password for the base image's local Administrator and the domain
+    # Administrator (user decision 2026-11-26): the forest keeps the local
+    # Administrator's password, so every run logs in with the base image
+    # password, before and after promotion.
     - name: Add the domain controller
       ansible.builtin.add_host:
         name: "{{ ad_infra_vm.name }}"
@@ -129,7 +131,7 @@
         ansible_winrm_transport: ntlm
         ansible_winrm_server_cert_validation: ignore
         ansible_user: "{{ ad_infra_admin_user }}"
-        ansible_password: "{{ vaulted_ad_domain_admin_password }}"
+        ansible_password: "{{ autodeploy_vault.vaulted_windows_base_image_admin_password }}"
       no_log: true
 
 - name: Create the domain controller VM on the hypervisor
@@ -240,27 +242,12 @@
       # The deployer's inventory names localhost without a local connection.
       connection: local
 
-    - name: Check whether the domain Administrator password is already set
-      ansible.windows.win_ping:
-      ignore_unreachable: true
-      register: ad_admin_login
-
-    - name: Set the domain Administrator password (first run, base image password)
-      ansible.windows.win_user:
-        name: "{{ infra.ad_infra_admin_user }}"
-        password: "{{ infra.vaulted_ad_domain_admin_password }}"
-        password_never_expires: true
-      vars:
-        ansible_password: "{{ infra.autodeploy_vault.vaulted_windows_base_image_admin_password }}"
-      when: ad_admin_login is unreachable
-      no_log: true
-
     # Every fresh clone gets a full evaluation period (user decision
     # 2026-11-24, as in Windows patching): a clone otherwise inherits the
     # base image's evaluation clock. The rearm count is limited (1 on the
     # Server 2025 image), so only a VM created in this run is rearmed, never
-    # on reruns. After the password task (the rearm needs a login), before
-    # activation and the forest; the rearm needs a reboot.
+    # on reruns. After the WinRM wait, before activation and the forest; the
+    # rearm needs a reboot.
     - name: Rearm the evaluation of a VM created in this run
       ansible.windows.win_command: cscript //nologo C:\Windows\System32\slmgr.vbs /rearm
       when: infra.ad_infra_vm.name not in hostvars['hypervisor'].defined_vms.stdout_lines
